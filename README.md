@@ -1,15 +1,28 @@
 # AtomS3 Lite Pink-Noise Player
 
-A MicroPython script that generates Paul Kellet pink noise and outputs it over I2S (16-bit mono, 16 kHz) for M5Stack AtomS3 Lite.
+A portable MicroPython script that generates Paul Kellet pink noise for the M5Stack AtomS3 Lite (paired with Atom SPK and TailBattery).
 
-## Hardware Setup ( Requirements)
+## Hardware Setup
 - **Main Unit:** M5Stack AtomS3 Lite
-- **Audio:** M5Stack Atom SPK
-- **Power:** TailBattery (Portable setup)
+- **Audio Output:** M5Stack Atom SPK (Speaker module)
+- **Power Source:** M5Stack TailBattery (Portable setup)
+
+## Pin Configuration
+| Usage | GPIO Pin | Description |
+| :--- | :--- | :--- |
+| **BCLK** (Bit Clock) | GPIO 5 | I2S Audio |
+| **WS** (Word Select) | GPIO 39 | I2S Audio |
+| **DATA** (Data Out) | GPIO 38 | I2S Audio |
+| **Button** (Built-in) | GPIO 41 | Toggle Play / Stop |
+| **LED** (WS2812) | GPIO 35 | Status Indicator |
+
+## Usage
+Press the built-in button on the AtomS3 Lite to toggle playback:
+
+- 🟢 **Stopped:** LED lights up green, outputs a silent buffer.
+- 🔵 **Playing:** LED lights up blue, outputs pink noise.
 
 ## Features
-- Generates Paul Kellet pink noise via I2S.
-- Hardware button to toggle playback (with debounce).
-- Custom `SimpleLED` class (`machine.bitstream`) for WS2812 LED.
-- Status indicator: Stopped (Green) / Playing (Blue).
-- 
+- Generates 16-bit mono, 16 kHz Paul Kellet pink noise via I2S.
+- Includes a custom `SimpleLED` class utilizing `machine.bitstream` without needing external modules.
+- Built-in button debounce and chunked buffering for stable playback.
