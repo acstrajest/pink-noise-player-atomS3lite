@@ -5,35 +5,36 @@ import machine
 from machine import I2S, Pin
 
 # ==========================================
-# 設定
+# Configuration
 # ==========================================
 BCLK_PIN = 5   # Bit Clock
 DATA_PIN = 38  # Data Out
 WS_PIN = 39    # LRCK (Word Select)
-BTN_PIN = 41   # AtomS3 Lite 本体ボタン
-LED_PIN = 35   # AtomS3 Lite 内蔵LEDピン
+BTN_PIN = 41   # AtomS3 Lite built-in button
+LED_PIN = 35   # AtomS3 Lite built-in RGB LED pin
 
-VOLUME = 1200  # 音量 (0〜32767)
+VOLUME = 1200  # Volume level (0 to 32767)
 
 # ==========================================
-# カスタムLED制御 (neopixelモジュール不要版)
+# Custom LED Controller (No neopixel module required)
 # ==========================================
-# 外部モジュールを使わず、標準のパルス送信機能で直接LEDを光らせます
+# Directly controls the RGB LED using standard bitstream functionality 
+# without relying on external libraries.
 class SimpleLED:
     def __init__(self, pin_num):
         self.pin = Pin(pin_num, Pin.OUT)
         self.buf = bytearray(3)
         
     def set_color(self, r, g, b):
-        # WS2812は 緑(G)→赤(R)→青(B) の順番でデータを送る仕様
+        # WS2812 expects data in Green -> Red -> Blue (GRB) order
         self.buf[0] = g
         self.buf[1] = r
         self.buf[2] = b
-        # machine.bitstream機能を使ってLED信号を直接送信
+        # Send raw timing signals using machine.bitstream
         machine.bitstream(self.pin, 0, (400, 850, 800, 450), self.buf)
 
 # ==========================================
-# I2S・ボタン・LEDの初期化
+# Initialize I2S, Button, and LED
 # ==========================================
 audio_out = I2S(
     0,
@@ -49,14 +50,14 @@ audio_out = I2S(
 
 button = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
 
-# 自作したLEDクラスを初期化
+# Initialize custom LED instance
 led = SimpleLED(LED_PIN)
 
-# LEDの色定義 (R, G, B)
-COLOR_STOP = (0, 30, 0)   # 停止中：緑
-COLOR_PLAY = (0, 0, 30)   # 再生中：青
+# LED color definitions (R, G, B)
+COLOR_STOP = (0, 30, 0)   # Stopped state: Green
+COLOR_PLAY = (0, 0, 30)   # Playing state: Blue
 
-# 起動直後は停止状態なので「緑」を点灯
+# Set initial status to Green (Stopped)
 led.set_color(*COLOR_STOP)
 
 CHUNK_SAMPLES = 2048
@@ -67,7 +68,7 @@ silent_buf = bytearray(CHUNK_BYTES)
 filter_state = [0, 0, 0, 0, 0, 0, 0]
 
 # ==========================================
-# ピンクノイズ生成関数 (Paul Kelletアルゴリズム)
+# Pink Noise Generator (Paul Kellet Algorithm)
 # ==========================================
 def generate_paul_kellet_noise(raw_bytes, out_buf, vol, state):
     _b0, _b1, _b2, _b3, _b4, _b5, _b6 = state
@@ -97,12 +98,12 @@ def generate_paul_kellet_noise(raw_bytes, out_buf, vol, state):
     state[3] = _b3; state[4] = _b4; state[5] = _b5; state[6] = _b6
 
 # ==========================================
-# メインループ
+# Main Loop
 # ==========================================
 is_playing = False
 _urandom = os.urandom
 
-print("準備完了：AtomS3 Liteのボタンで再生/停止（LED連動）")
+print("Ready: Press AtomS3 Lite button to Play/Stop (LED status active)")
 
 while True:
     if button.value() == 0:
@@ -111,11 +112,11 @@ while True:
             is_playing = not is_playing
             
             if is_playing:
-                print("ピンクノイズ再生中...")
-                led.set_color(*COLOR_PLAY)  # 青色に変更
+                print("Playing pink noise...")
+                led.set_color(*COLOR_PLAY)  # Switch to Blue
             else:
-                print("停止しました")
-                led.set_color(*COLOR_STOP)  # 緑色に変更
+                print("Stopped")
+                led.set_color(*COLOR_STOP)  # Switch to Green
                 
             while button.value() == 0:
                 time.sleep_ms(10)
