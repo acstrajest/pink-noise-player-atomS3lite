@@ -35,3 +35,15 @@ Press the built-in button on the AtomS3 Lite to toggle playback:
 1. Flash **MicroPython** firmware to your AtomS3 Lite.
 2. Stack the **Atom SPK** and **TailBattery** onto the AtomS3 Lite.
 3. Upload `main.py` (or the script) to the device and run it.
+
+---
+
+## FAQ
+
+**Q. How do I change the volume?**
+A. Edit the `VOLUME = 1200` line in `main.py` before uploading.
+
+**Q. Why is there no volume control via button?**
+A. To keep this device as a zero-friction "focus gear." 
+Just flip the switch, and it instantly plays at your favorite pre-set volume—no extra clicks, no distraction.
+
