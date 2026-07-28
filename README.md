@@ -5,7 +5,7 @@ A portable MicroPython script that generates Paul Kellet pink noise for the **M5
 ## Hardware Setup
 
 * **Main Unit:** M5Stack AtomS3 Lite
-* **Audio Output:** M5Stack Atom SPK (Speaker module)
+* **Audio Output: M5Stack Atom SPK (or Atomic SPK Base) – I2S audio module with a built-in headphone jack for private listening
 * **Power Source:** M5Stack TailBattery (Portable setup)
 
 ## Pin Configuration
@@ -23,6 +23,10 @@ A portable MicroPython script that generates Paul Kellet pink noise for the **M5
 Press the built-in button on the AtomS3 Lite to toggle playback:
 * 🟢 **Stopped:** LED lights up green (outputs a silent buffer).
 * 🔵 **Playing:** LED lights up blue (outputs pink noise).
+
+Audio Output Options:
+You can connect wired earphones/headphones to the headphone jack on the Atom SPK / Atomic SPK Base module.
+For speaker output, the module also has a built-in speaker.
 
 ## Features
 
