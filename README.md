@@ -51,3 +51,5 @@ A. Edit the `VOLUME = 1200` line in `main.py` before uploading.
 A. To keep this device as a zero-friction "focus gear." 
 Just flip the switch, and it instantly plays at your favorite pre-set volume—no extra clicks, no distraction.
 
+About Earphones:
+This player is tuned to work well even with standard, low-cost earphones (like typical 100-yen shop ones). No special high-impedance headphones are required—just plug in and enjoy.
