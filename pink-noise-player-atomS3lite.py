@@ -54,8 +54,8 @@ button = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
 led = SimpleLED(LED_PIN)
 
 # LED color definitions (R, G, B)
-COLOR_STOP = (0, 30, 0)   # Stopped state: Green
-COLOR_PLAY = (0, 0, 30)   # Playing state: Blue
+COLOR_STOP = (0, 5, 0)    # Stopped state: Green (Dimmed for power saving)
+COLOR_PLAY = (0, 0, 5)    # Playing state: Blue (Dimmed for power saving)
 
 # Set initial status to Green (Stopped)
 led.set_color(*COLOR_STOP)
