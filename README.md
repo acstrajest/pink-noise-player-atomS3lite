@@ -1,12 +1,12 @@
 # AtomS3 Lite Pink-Noise Player
 
-A portable MicroPython script that generates Paul Kellet pink noise for the **M5Stack AtomS3 Lite** (paired with Atom SPK and TailBattery).
+A portable MicroPython script that generates Paul Kellet pink noise for the M5Stack AtomS3 Lite (paired with Atomic SPK Base and ATOM TailBAT).
 
 ## Hardware Setup
 
 * **Main Unit:** M5Stack AtomS3 Lite
-* **Audio Output: M5Stack Atom SPK (or Atomic SPK Base) – I2S audio module with a built-in headphone jack for private listening
-* **Power Source:** M5Stack TailBattery (Portable setup)
+* **Audio Output:** Atomic SPK Base – I2S audio module with a built-in 3.5mm headphone jack for private listening
+* **Power Source:** ATOM TailBAT (Portable setup)
 
 ## Pin Configuration
 
