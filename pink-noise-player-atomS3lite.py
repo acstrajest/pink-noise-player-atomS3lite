@@ -13,7 +13,9 @@ WS_PIN = 39    # LRCK (Word Select)
 BTN_PIN = 41   # AtomS3 Lite built-in button
 LED_PIN = 35   # AtomS3 Lite built-in RGB LED pin
 
-VOLUME = 1200  # Volume level (0 to 32767)
+VOLUME_MIN = 0
+VOLUME_MAX = 1500
+VOLUME_STEP = 25
 
 # ==========================================
 # Custom LED Controller (No neopixel module required)
@@ -25,13 +27,60 @@ class SimpleLED:
         self.pin = Pin(pin_num, Pin.OUT)
         self.buf = bytearray(3)
         
-    def set_color(self, r, g, b):
+    def set_color(self, r, g, b, brightness=1.0):
         # WS2812 expects data in Green -> Red -> Blue (GRB) order
-        self.buf[0] = g
-        self.buf[1] = r
-        self.buf[2] = b
+        self.buf[0] = int(g * brightness)
+        self.buf[1] = int(r * brightness)
+        self.buf[2] = int(b * brightness)
         # Send raw timing signals using machine.bitstream
         machine.bitstream(self.pin, 0, (400, 850, 800, 450), self.buf)
+
+# ==========================================
+# Non-blocking Button Handler
+# ==========================================
+class ButtonHandler:
+    def __init__(self, pin_num):
+        self.pin = Pin(pin_num, Pin.IN, Pin.PULL_UP)
+        self.state = 0
+        self.press_time = 0
+        self.release_time = 0
+        self.long_press_triggered = False
+        
+    def update(self):
+        now = time.ticks_ms()
+        val = self.pin.value()
+        event = None
+        
+        if val == 0: # Pressed
+            if self.state == 0: # Just pressed
+                self.press_time = now
+                self.state = 1
+                self.long_press_triggered = False
+            elif self.state == 1: # Holding
+                if not self.long_press_triggered and time.ticks_diff(now, self.press_time) > 1000:
+                    self.long_press_triggered = True
+                    event = 'LONG'
+                elif self.long_press_triggered:
+                    event = 'HOLDING'
+            elif self.state == 2: # Second press (Double click detected early)
+                self.state = 3
+        else: # Released
+            if self.state == 1:
+                self.release_time = now
+                if not self.long_press_triggered:
+                    self.state = 2 # Wait to see if it's a double click
+                else:
+                    self.state = 0 # End of long press
+            elif self.state == 2:
+                if time.ticks_diff(now, self.release_time) > 250: # Timeout -> Single click
+                    self.state = 0
+                    event = 'SINGLE'
+            elif self.state == 3: # Released after double click
+                self.state = 0
+                event = 'DOUBLE'
+                
+        return event
+
 
 # ==========================================
 # Initialize I2S, Button, and LED
@@ -48,7 +97,7 @@ audio_out = I2S(
     ibuf=8192
 )
 
-button = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
+btn = ButtonHandler(BTN_PIN)
 
 # Initialize custom LED instance
 led = SimpleLED(LED_PIN)
@@ -56,6 +105,7 @@ led = SimpleLED(LED_PIN)
 # LED color definitions (R, G, B)
 COLOR_STOP = (0, 5, 0)    # Stopped state: Green (Dimmed for power saving)
 COLOR_PLAY = (0, 0, 5)    # Playing state: Blue (Dimmed for power saving)
+COLOR_VOL = (10, 10, 0)   # Volume adjust: Yellow
 
 # Set initial status to Green (Stopped)
 led.set_color(*COLOR_STOP)
@@ -101,28 +151,49 @@ def generate_paul_kellet_noise(raw_bytes, out_buf, vol, state):
 # Main Loop
 # ==========================================
 is_playing = False
+current_volume = 1200
+vol_direction = 1
 _urandom = os.urandom
 
 print("Ready: Press AtomS3 Lite button to Play/Stop (LED status active)")
 
 while True:
-    if button.value() == 0:
-        time.sleep_ms(50)
-        if button.value() == 0:
-            is_playing = not is_playing
+    event = btn.update()
+    
+    if event == 'SINGLE':
+        is_playing = not is_playing
+        if is_playing:
+            print(f"Playing pink noise... (Vol: {current_volume})")
+        else:
+            print("Stopped")
             
-            if is_playing:
-                print("Playing pink noise...")
-                led.set_color(*COLOR_PLAY)  # Switch to Blue
-            else:
-                print("Stopped")
-                led.set_color(*COLOR_STOP)  # Switch to Green
+    elif event == 'HOLDING':
+        if is_playing:
+            current_volume += VOLUME_STEP * vol_direction
+            if current_volume >= VOLUME_MAX:
+                current_volume = VOLUME_MAX
+                vol_direction = -1
+            elif current_volume <= VOLUME_MIN:
+                current_volume = VOLUME_MIN
+                vol_direction = 1
                 
-            while button.value() == 0:
-                time.sleep_ms(10)
+    elif event == 'LONG':
+        if is_playing:
+            vol_direction = 1
+            
+    # LED Updates
+    if event == 'HOLDING' or event == 'LONG':
+        if is_playing:
+            led.set_color(*COLOR_VOL)
+    else:
+        if is_playing:
+            led.set_color(*COLOR_PLAY)
+        else:
+            led.set_color(*COLOR_STOP)
                 
     if is_playing:
-        generate_paul_kellet_noise(_urandom(CHUNK_SAMPLES), noise_buf, VOLUME, filter_state)
+        generate_paul_kellet_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, filter_state)
         audio_out.write(noise_buf)
     else:
         audio_out.write(silent_buf)
+        time.sleep_ms(10) # 停止中のCPU負荷を下げる
