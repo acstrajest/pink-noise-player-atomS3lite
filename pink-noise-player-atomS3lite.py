@@ -2,6 +2,7 @@ import os
 import struct
 import time
 import machine
+import math
 from machine import I2S, Pin
 
 # ==========================================
@@ -15,7 +16,7 @@ LED_PIN = 35   # AtomS3 Lite built-in RGB LED pin
 
 VOLUME_MIN = 0
 VOLUME_MAX = 1500
-VOLUME_STEP = 25
+VOLUME_STEP = 50
 
 # ==========================================
 # Custom LED Controller (No neopixel module required)
@@ -152,6 +153,7 @@ def generate_paul_kellet_noise(raw_bytes, out_buf, vol, state):
 # ==========================================
 is_playing = False
 current_volume = 1200
+vol_phase = math.acos(1 - 2 * (current_volume - VOLUME_MIN) / (VOLUME_MAX - VOLUME_MIN))
 vol_direction = 1
 _urandom = os.urandom
 
@@ -169,13 +171,17 @@ while True:
             
     elif event == 'HOLDING':
         if is_playing:
-            current_volume += VOLUME_STEP * vol_direction
-            if current_volume >= VOLUME_MAX:
-                current_volume = VOLUME_MAX
+            phase_step = math.pi / ((VOLUME_MAX - VOLUME_MIN) / VOLUME_STEP)
+            vol_phase += phase_step * vol_direction
+            
+            if vol_phase >= math.pi:
+                vol_phase = math.pi
                 vol_direction = -1
-            elif current_volume <= VOLUME_MIN:
-                current_volume = VOLUME_MIN
+            elif vol_phase <= 0:
+                vol_phase = 0
                 vol_direction = 1
+                
+            current_volume = int(VOLUME_MIN + (VOLUME_MAX - VOLUME_MIN) * (1 - math.cos(vol_phase)) / 2)
                 
     elif event == 'LONG':
         if is_playing:
@@ -196,4 +202,4 @@ while True:
         audio_out.write(noise_buf)
     else:
         audio_out.write(silent_buf)
-        time.sleep_ms(10) # 停止中のCPU負荷を下げる
+        time.sleep_ms(10) # Reduce CPU load while stopped
