@@ -54,8 +54,5 @@ A. While playing audio, simply **press and hold** the built-in button. The LED w
 **Q. Can I use standard earphones?**  
 A. Yes! This player is tuned to work well even with standard, low-cost earphones (like typical 100-yen shop ones). No special high-impedance headphones are required—just plug in and enjoy.
 
-**Q. Will it work on older models like ATOM Lite?**  
-A. Yes, but you need to adjust the GPIO pin definitions in the script (Button, LED, and I2S pins) to match your specific hardware layout.
-
 About Earphones:
 This player is tuned to work well even with standard, low-cost earphones (like typical 100-yen shop ones). No special high-impedance headphones are required—just plug in and enjoy.
