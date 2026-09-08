@@ -15,41 +15,47 @@ A portable MicroPython script that generates Paul Kellet pink noise for the M5St
 | **BCLK** (Bit Clock) | GPIO 5 | I2S Audio |
 | **WS** (Word Select / LRCK) | GPIO 39 | I2S Audio |
 | **DATA** (Data Out) | GPIO 38 | I2S Audio |
-| **Button** (Built-in) | GPIO 41 | Toggle Play / Stop |
+| **Button** (Built-in) | GPIO 41 | Multi-function Control |
 | **LED** (WS2812) | GPIO 35 | Status Indicator |
 
 ## How to Use
 
-Press the built-in button on the AtomS3 Lite to toggle playback:
-* 🟢 **Stopped:** LED lights up green (outputs a silent buffer).
-* 🔵 **Playing:** LED lights up blue (outputs pink noise).
+Operate everything using the single built-in button on the AtomS3 Lite:
 
-Audio Output Options:
-You can connect wired earphones/headphones to the headphone jack on the Atom SPK / Atomic SPK Base module.
-For speaker output, the module also has a built-in speaker.
+* **Single Click:** Toggle Play / Stop
+  * 🟢 **Green:** Stopped
+  * 🔵 **Blue:** Playing
+* **Long Press (Hold):** Adjust Volume (Non-linear smooth transition)
+  * 🟡 **Yellow:** Adjusting Volume (Cycles smoothly between min and max volume)
+
+> **Note on Volume Control:**  
+> Volume changes dynamically following a cosine wave (S-curve) profile, making volume shifts feel natural and smooth to human hearing. Releasing the button sets the current volume.
 
 ## Features
 
-* **Real-time Pink Noise:** Generates 16-bit mono, 16 kHz Paul Kellet pink noise dynamically via I2S.
+* **Real-time Pink Noise:** Generates 16-bit mono, 16 kHz Paul Kellet pink noise dynamically via I2S using hardware TRNG (`os.urandom`).
+* **Smooth Smooth-Curve Volume Control:** Intuitive 1-button volume adjustment using a non-blocking button state machine and cosine interpolation.
 * **Zero External Dependencies:** Includes a custom `SimpleLED` class utilizing `machine.bitstream` (no `neopixel` library required).
-* **Stable Audio Processing:** Built-in button debounce and chunked buffering to prevent audio crackles.
+* **Stable Audio Processing:** Non-blocking input processing to ensure crackle-free audio playback during button presses.
 
 ## Quick Start
 
 1. Flash **MicroPython** firmware to your AtomS3 Lite.
-2. Stack the **Atom SPK** and **TailBattery** onto the AtomS3 Lite.
+2. Stack the **Atomic SPK Base** and **ATOM TailBAT** onto the AtomS3 Lite.
 3. Upload `main.py` (or the script) to the device and run it.
 
 ---
 
 ## FAQ
 
-**Q. How do I change the volume?**
-A. Edit the `VOLUME = 1200` line in `main.py` before uploading.
+**Q. How do I change the volume?**  
+A. While playing audio, simply **press and hold** the built-in button. The LED will turn **Yellow**, and the volume will smoothly sweep up and down. Release the button when it reaches your desired volume.
 
-**Q. Why is there no volume control via button?**
-A. To keep this device as a zero-friction "focus gear." 
-Just flip the switch, and it instantly plays at your favorite pre-set volume—no extra clicks, no distraction.
+**Q. Can I use standard earphones?**  
+A. Yes! This player is tuned to work well even with standard, low-cost earphones (like typical 100-yen shop ones). No special high-impedance headphones are required—just plug in and enjoy.
+
+**Q. Will it work on older models like ATOM Lite?**  
+A. Yes, but you need to adjust the GPIO pin definitions in the script (Button, LED, and I2S pins) to match your specific hardware layout.
 
 About Earphones:
 This player is tuned to work well even with standard, low-cost earphones (like typical 100-yen shop ones). No special high-impedance headphones are required—just plug in and enjoy.
