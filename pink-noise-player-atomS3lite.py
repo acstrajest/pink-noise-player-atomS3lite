@@ -202,4 +202,3 @@ while True:
         audio_out.write(noise_buf)
     else:
         audio_out.write(silent_buf)
-        time.sleep_ms(10) # Reduce CPU load while stopped
