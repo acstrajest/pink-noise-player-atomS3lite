@@ -2,6 +2,7 @@ import os
 import struct
 import time
 import machine
+import esp32
 import math
 from machine import I2S, Pin
 
@@ -166,6 +167,7 @@ timer_active = False
 timer_start_ms = 0
 TIMER_DURATION_MS = 30 * 60 * 1000 # 30 minutes in milliseconds
 standby_mode = False
+standby_start_ms = 0
 
 print("Ready: Press AtomS3 Lite button to Play/Stop (LED status active)")
 
@@ -220,11 +222,28 @@ while True:
             is_playing = False
             timer_active = False
             standby_mode = True
+            standby_start_ms = time.ticks_ms()
             
             # To ensure absolute silence, send silent buffer then deinit I2S
             for _ in range(10):
                 audio_out.write(silent_buf)
             audio_out.deinit()
+
+    # Deep Sleep Check in Standby Mode
+    if standby_mode:
+        if time.ticks_diff(time.ticks_ms(), standby_start_ms) >= 60000:
+            print("Standby timeout. Going to Deep Sleep.")
+            led.set_color(0, 0, 0)
+            time.sleep_ms(100) # Give some time for LED to turn off
+            
+            # Deep sleep setup (wake on button press)
+            wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
+            try:
+                esp32.wake_on_ext0(pin=wake_pin, level=esp32.WAKEUP_ALL_LOW)
+            except Exception as e:
+                print("Wake on ext0 failed:", e)
+            
+            machine.deepsleep()
             
     # LED Updates
     if standby_mode:
