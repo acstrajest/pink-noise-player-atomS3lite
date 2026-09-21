@@ -2,6 +2,7 @@ import os
 import struct
 import time
 import machine
+import esp32
 import math
 from machine import I2S, Pin
 
@@ -86,17 +87,20 @@ class ButtonHandler:
 # ==========================================
 # Initialize I2S, Button, and LED
 # ==========================================
-audio_out = I2S(
-    0,
-    sck=Pin(BCLK_PIN),
-    ws=Pin(WS_PIN),
-    sd=Pin(DATA_PIN),
-    mode=I2S.TX,
-    bits=16,
-    format=I2S.MONO,
-    rate=16000,
-    ibuf=8192
-)
+def init_i2s():
+    return I2S(
+        0,
+        sck=Pin(BCLK_PIN),
+        ws=Pin(WS_PIN),
+        sd=Pin(DATA_PIN),
+        mode=I2S.TX,
+        bits=16,
+        format=I2S.MONO,
+        rate=16000,
+        ibuf=8192
+    )
+
+audio_out = init_i2s()
 
 btn = ButtonHandler(BTN_PIN)
 
@@ -107,6 +111,8 @@ led = SimpleLED(LED_PIN)
 COLOR_STOP = (0, 5, 0)    # Stopped state: Green (Dimmed for power saving)
 COLOR_PLAY = (0, 0, 5)    # Playing state: Blue (Dimmed for power saving)
 COLOR_VOL = (10, 10, 0)   # Volume adjust: Yellow
+COLOR_TIMER = (10, 0, 5)  # Timer active: Pink
+COLOR_STANDBY = (2, 2, 2) # Standby mode: Dim White
 
 # Set initial status to Green (Stopped)
 led.set_color(*COLOR_STOP)
@@ -157,20 +163,42 @@ vol_phase = math.acos(1 - 2 * (current_volume - VOLUME_MIN) / (VOLUME_MAX - VOLU
 vol_direction = 1
 _urandom = os.urandom
 
+timer_active = False
+timer_start_ms = 0
+TIMER_DURATION_MS = 30 * 60 * 1000 # 30 minutes in milliseconds
+standby_mode = False
+standby_start_ms = 0
+
 print("Ready: Press AtomS3 Lite button to Play/Stop (LED status active)")
 
 while True:
     event = btn.update()
     
     if event == 'SINGLE':
-        is_playing = not is_playing
-        if is_playing:
-            print(f"Playing pink noise... (Vol: {current_volume})")
+        if standby_mode:
+            standby_mode = False
+            is_playing = False
+            timer_active = False
+            audio_out = init_i2s()
+            print("Standby mode cleared -> Stopped")
+        elif timer_active:
+            timer_active = False
+            print("Timer Cancelled. Playing continues.")
         else:
-            print("Stopped")
+            is_playing = not is_playing
+            if is_playing:
+                print(f"Playing pink noise... (Vol: {current_volume})")
+            else:
+                print("Stopped")
+                
+    elif event == 'DOUBLE':
+        if is_playing and not timer_active:
+            timer_active = True
+            timer_start_ms = time.ticks_ms()
+            print("Timer Started (30 minutes)")
             
     elif event == 'HOLDING':
-        if is_playing:
+        if is_playing and not standby_mode:
             phase_step = math.pi / ((VOLUME_MAX - VOLUME_MIN) / VOLUME_STEP)
             vol_phase += phase_step * vol_direction
             
@@ -184,20 +212,60 @@ while True:
             current_volume = int(VOLUME_MIN + (VOLUME_MAX - VOLUME_MIN) * (1 - math.cos(vol_phase)) / 2)
                 
     elif event == 'LONG':
-        if is_playing:
+        if is_playing and not standby_mode:
             vol_direction = 1
             
+    # Timer Check
+    if is_playing and timer_active:
+        if time.ticks_diff(time.ticks_ms(), timer_start_ms) >= TIMER_DURATION_MS:
+            print("Timer Finished. Going to Standby mode.")
+            is_playing = False
+            timer_active = False
+            standby_mode = True
+            standby_start_ms = time.ticks_ms()
+            
+            # To ensure absolute silence, send silent buffer then deinit I2S
+            for _ in range(10):
+                audio_out.write(silent_buf)
+            audio_out.deinit()
+
+    # Deep Sleep Check in Standby Mode
+    if standby_mode:
+        if time.ticks_diff(time.ticks_ms(), standby_start_ms) >= 60000: # 1 minute timeout
+            print("Standby timeout. Going to Deep Sleep.")
+            
+            # 1. Turn off LED completely
+            led.set_color(0, 0, 0)
+            
+            # 2. Deep sleep setup (wake on button press)
+            wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
+            try:
+                esp32.wake_on_ext0(pin=wake_pin, level=esp32.WAKEUP_ALL_LOW)
+            except Exception as e:
+                print("Wake on ext0 failed:", e)
+            
+            time.sleep_ms(100) # Ensure serial log and LED turn-off complete
+            
+            # 3. Enter Deep Sleep immediately
+            machine.deepsleep()
+            
     # LED Updates
-    if event == 'HOLDING' or event == 'LONG':
+    if standby_mode:
+        led.set_color(*COLOR_STANDBY)
+    elif event == 'HOLDING' or event == 'LONG':
         if is_playing:
             led.set_color(*COLOR_VOL)
     else:
-        if is_playing:
+        if timer_active:
+            led.set_color(*COLOR_TIMER)
+        elif is_playing:
             led.set_color(*COLOR_PLAY)
         else:
             led.set_color(*COLOR_STOP)
                 
-    if is_playing:
+    if standby_mode:
+        time.sleep_ms(20) # Save power and wait
+    elif is_playing:
         generate_paul_kellet_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, filter_state)
         audio_out.write(noise_buf)
     else:
