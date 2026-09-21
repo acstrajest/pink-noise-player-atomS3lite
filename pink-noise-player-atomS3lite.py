@@ -231,18 +231,22 @@ while True:
 
     # Deep Sleep Check in Standby Mode
     if standby_mode:
-        if time.ticks_diff(time.ticks_ms(), standby_start_ms) >= 60000:
+        if time.ticks_diff(time.ticks_ms(), standby_start_ms) >= 60000: # 1 minute timeout
             print("Standby timeout. Going to Deep Sleep.")
-            led.set_color(0, 0, 0)
-            time.sleep_ms(100) # Give some time for LED to turn off
             
-            # Deep sleep setup (wake on button press)
+            # 1. Turn off LED completely
+            led.set_color(0, 0, 0)
+            
+            # 2. Deep sleep setup (wake on button press)
             wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
             try:
                 esp32.wake_on_ext0(pin=wake_pin, level=esp32.WAKEUP_ALL_LOW)
             except Exception as e:
                 print("Wake on ext0 failed:", e)
             
+            time.sleep_ms(100) # Ensure serial log and LED turn-off complete
+            
+            # 3. Enter Deep Sleep immediately
             machine.deepsleep()
             
     # LED Updates
