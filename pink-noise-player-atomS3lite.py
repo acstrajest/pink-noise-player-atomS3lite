@@ -166,6 +166,10 @@ _urandom = os.urandom
 timer_active = False
 timer_start_ms = 0
 TIMER_DURATION_MS = 30 * 60 * 1000 # 30 minutes in milliseconds
+fadeout_mode = False
+fadeout_start_ms = 0
+fadeout_start_vol = 0
+FADEOUT_DURATION_MS = 60 * 1000 # 1 minute fadeout
 standby_mode = False
 standby_start_ms = 0
 
@@ -181,9 +185,12 @@ while True:
             timer_active = False
             audio_out = init_i2s()
             print("Standby mode cleared -> Stopped")
-        elif timer_active:
+        elif timer_active or fadeout_mode:
+            if fadeout_mode:
+                current_volume = fadeout_start_vol
+                fadeout_mode = False
             timer_active = False
-            print("Timer Cancelled. Playing continues.")
+            print("Timer/Fadeout Cancelled. Playing continues.")
         else:
             is_playing = not is_playing
             if is_playing:
@@ -192,7 +199,7 @@ while True:
                 print("Stopped")
                 
     elif event == 'DOUBLE':
-        if is_playing and not timer_active:
+        if is_playing and not timer_active and not fadeout_mode:
             timer_active = True
             timer_start_ms = time.ticks_ms()
             print("Timer Started (30 minutes)")
@@ -216,11 +223,21 @@ while True:
             vol_direction = 1
             
     # Timer Check
-    if is_playing and timer_active:
+    if is_playing and timer_active and not fadeout_mode:
         if time.ticks_diff(time.ticks_ms(), timer_start_ms) >= TIMER_DURATION_MS:
-            print("Timer Finished. Going to Standby mode.")
-            is_playing = False
+            print("Timer Finished. Starting Fadeout.")
             timer_active = False
+            fadeout_mode = True
+            fadeout_start_ms = time.ticks_ms()
+            fadeout_start_vol = current_volume
+
+    # Fadeout Check
+    if fadeout_mode:
+        elapsed = time.ticks_diff(time.ticks_ms(), fadeout_start_ms)
+        if elapsed >= FADEOUT_DURATION_MS:
+            print("Fadeout finished. Going to Standby mode.")
+            fadeout_mode = False
+            is_playing = False
             standby_mode = True
             standby_start_ms = time.ticks_ms()
             
@@ -228,6 +245,9 @@ while True:
             for _ in range(10):
                 audio_out.write(silent_buf)
             audio_out.deinit()
+        else:
+            ratio = elapsed / FADEOUT_DURATION_MS
+            current_volume = int(fadeout_start_vol * (1.0 - ratio))
 
     # Deep Sleep Check in Standby Mode
     if standby_mode:
@@ -256,7 +276,7 @@ while True:
         if is_playing:
             led.set_color(*COLOR_VOL)
     else:
-        if timer_active:
+        if timer_active or fadeout_mode:
             led.set_color(*COLOR_TIMER)
         elif is_playing:
             led.set_color(*COLOR_PLAY)
