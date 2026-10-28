@@ -3,7 +3,6 @@ import struct
 import time
 import machine
 import math
-import random
 from machine import I2S, Pin
 
 # ==========================================
@@ -33,10 +32,11 @@ VOLUME_STEP = 50
 
 # ------------------------------------------
 # Session Timeline Configuration
-# Focus Sound Mix: Pink Noise (15m) -> Ambient Rain (15m) -> Granular (15m) -> Fadeout (60s) -> Deep Sleep
+# Focus Sound Mix: Pink Noise (15m) -> Ambient Rain (15m) -> Fadeout (60s) -> Deep Sleep
+# Total Session Duration: 30 minutes
 # ------------------------------------------
-# TEST_MODE: False = 45分セッション (本番用: 15分×3パート + 各60秒クロスフェード/フェードアウト)
-#            True  = 45秒セッション (動作確認用: 15秒×3パート + 各3秒クロスフェード/フェードアウト)
+# TEST_MODE: False = 30分セッション (本番用: 15分×2パート + 60秒クロスフェード + 60秒フェードアウト)
+#            True  = 30秒セッション (動作確認用: 15秒×2パート + 3秒クロスフェード + 3秒フェードアウト)
 TEST_MODE = False
 
 if TEST_MODE:
@@ -48,22 +48,20 @@ else:
     CROSSFADE_MS      = 60 * 1000       # 60 seconds crossfade
     FADEOUT_MS        = 60 * 1000       # 60 seconds final fadeout
 
-TOTAL_SESSION_MS = PHASE_DURATION_MS * 3
+TOTAL_SESSION_MS = PHASE_DURATION_MS * 2  # Total: 30 minutes (or 30 seconds in test mode)
 
 # Transition milestones
-T1_START = PHASE_DURATION_MS - CROSSFADE_MS
-T1_END   = PHASE_DURATION_MS
-T2_START = PHASE_DURATION_MS * 2 - CROSSFADE_MS
-T2_END   = PHASE_DURATION_MS * 2
-T3_START = TOTAL_SESSION_MS - FADEOUT_MS
-T3_END   = TOTAL_SESSION_MS
+T1_START = PHASE_DURATION_MS - CROSSFADE_MS  # 14m: Pink -> Rain crossfade starts
+T1_END   = PHASE_DURATION_MS                 # 15m: Rain 100% starts
+T2_START = TOTAL_SESSION_MS - FADEOUT_MS     # 29m: Final fadeout starts
+T2_END   = TOTAL_SESSION_MS                  # 30m: Sleep transition
 
 # ------------------------------------------
 # Application State Definitions
 # ------------------------------------------
 STATE_STOPPED = 0   # 停止中
 STATE_PLAYING = 1   # 通常再生中（シングルクリック: ピンクノイズ常時再生）
-STATE_TIMER   = 2   # フォーカスミックスタイマー動作中（ダブルクリック: 45分セッション）
+STATE_TIMER   = 2   # フォーカスミックスタイマー動作中（ダブルクリック: 30分セッション）
 STATE_STANDBY = 3   # ディープスリープ移行前の待機状態
 
 # ==========================================
@@ -156,7 +154,6 @@ COLOR_PLAY        = (0, 0, 5)     # サファイアブルー   (通常ピンク�
 COLOR_VOL         = (10, 10, 0)   # アンバーイエロー   (音量調整中)
 COLOR_PHASE_PINK  = (12, 2, 5)    # ローズピンク       (タイマー Phase 1: ピンクノイズ)
 COLOR_PHASE_ENV   = (1, 10, 3)    # フォレストグリーン (タイマー Phase 2: 環境音・雨)
-COLOR_PHASE_GRAIN = (3, 4, 12)    # シアンインディゴ   (タイマー Phase 3: 粒状合成)
 COLOR_STANDBY     = (1, 1, 1)     # 薄白色             (スリープ直前待機)
 
 led.set_color(*COLOR_STOP)
@@ -199,6 +196,7 @@ def generate_pink_noise(raw_bytes, out_buf, vol, state, scale=256):
     state[3] = _b3; state[4] = _b4; state[5] = _b5; state[6] = _b6
 
 # --- 2. 環境音（雨音）生成器 (多段カスケードLPF + 高域テクスチャ + LFOうねり) ---
+# 音量はピンクノイズと同等〜約80%の落ち着いたレベルに調整 (mult = 17)
 env_lpf1 = 0
 env_lpf2 = 0
 env_lfo_phase = 0.0
@@ -229,7 +227,8 @@ def generate_env_noise(raw_bytes, out_buf, vol, scale=256):
         high = (white_in - lp1) >> 4
         
         rain = (lp1 + lp2 + high) >> 1
-        out_env = (rain * 22) >> 6
+        # 音量をピンクノイズと同等〜80%程度に調整
+        out_env = (rain * 17) >> 6
         if eff_scale != 256:
             out_env = (out_env * eff_scale) >> 8
         out = (out_env * vol) >> 9
@@ -241,95 +240,7 @@ def generate_env_noise(raw_bytes, out_buf, vol, scale=256):
     env_lpf1 = lp1
     env_lpf2 = lp2
 
-# --- 3. 粒状合成（Granular Texture）生成器 (Chamberlin SVF レゾナントフィルターバンク) ---
-grain1_f = 1200; grain1_q = 2800; grain1_env = 0; grain1_step = 12; grain1_state = 0
-grain2_f = 2400; grain2_q = 3200; grain2_env = 0; grain2_step = 8; grain2_state = 0
-
-grain1_low = 0; grain1_band = 0
-grain2_low = 0; grain2_band = 0
-
-def _update_grain_parameters():
-    """マイクログレイン（粒子）の周波数とエンベロープ状態を更新。"""
-    global grain1_f, grain1_q, grain1_env, grain1_step, grain1_state
-    global grain2_f, grain2_q, grain2_env, grain2_step, grain2_state
-    
-    # グレイン1: 低〜中音域の粒子
-    if grain1_state == 0:
-        grain1_f = random.randint(600, 2200)
-        grain1_q = random.randint(2200, 3600)
-        grain1_step = random.randint(18, 36)
-        grain1_env = 0
-        grain1_state = 1
-    elif grain1_state == 1:
-        grain1_env += grain1_step * 32
-        if grain1_env >= 256:
-            grain1_env = 256
-            grain1_state = 2
-    elif grain1_state == 2:
-        grain1_env -= grain1_step * 16
-        if grain1_env <= 0:
-            grain1_env = 0
-            grain1_state = 0
-            
-    # グレイン2: 中〜高音域の微粒子
-    if grain2_state == 0:
-        grain2_f = random.randint(1400, 3400)
-        grain2_q = random.randint(2400, 4200)
-        grain2_step = random.randint(14, 28)
-        grain2_env = 0
-        grain2_state = 1
-    elif grain2_state == 1:
-        grain2_env += grain2_step * 32
-        if grain2_env >= 256:
-            grain2_env = 256
-            grain2_state = 2
-    elif grain2_state == 2:
-        grain2_env -= grain2_step * 14
-        if grain2_env <= 0:
-            grain2_env = 0
-            grain2_state = 0
-
-def generate_granular_noise(raw_bytes, out_buf, vol, scale=256):
-    """共振フィルターバンクによる粒子感あふれる粒状合成ノイズを直接出力バッファに生成。"""
-    global grain1_low, grain1_band, grain2_low, grain2_band
-    _update_grain_parameters()
-    _pack_into = struct.pack_into
-    
-    g1_low = grain1_low; g1_band = grain1_band
-    g2_low = grain2_low; g2_band = grain2_band
-    f1 = grain1_f; q1 = grain1_q; env1 = grain1_env
-    f2 = grain2_f; q2 = grain2_q; env2 = grain2_env
-    
-    for i in range(len(raw_bytes)):
-        white = (raw_bytes[i] - 128) << 7
-        
-        # レゾナント SVF 1 (State Variable Filter)
-        g1_low += (f1 * g1_band) >> 14
-        high1 = white - g1_low - ((q1 * g1_band) >> 14)
-        g1_band += (f1 * high1) >> 14
-        
-        # レゾナント SVF 2
-        g2_low += (f2 * g2_band) >> 14
-        high2 = white - g2_low - ((q2 * g2_band) >> 14)
-        g2_band += (f2 * high2) >> 14
-        
-        # 粒子の包絡線合成と背景ノイズフロアのブレンド
-        grain_out = ((g1_band * env1) >> 8) + ((g2_band * env2) >> 8)
-        val = (grain_out >> 1) + (white >> 2)
-        out_grain = val >> 3
-        
-        if scale != 256:
-            out_grain = (out_grain * scale) >> 8
-        out = (out_grain * vol) >> 9
-        
-        if out > 32767: out = 32767
-        elif out < -32768: out = -32768
-        _pack_into('<h', out_buf, i * 2, out)
-        
-    grain1_low = g1_low; grain1_band = g1_band
-    grain2_low = g2_low; grain2_band = g2_band
-
-# --- 4. 高速シングルパス・等電力クロスフェード合成器 ---
+# --- 3. 高速シングルパス・等電力クロスフェード合成器 ---
 def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
     """ピンクノイズから環境音へのシームレスな等電力クロスフェード生成。"""
     global env_lpf1, env_lpf2, env_lfo_phase
@@ -363,7 +274,7 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
         lp2 += (4200 * (lp1 - lp2)) >> 15
         high = (w_in - lp1) >> 4
         rain = (lp1 + lp2 + high) >> 1
-        out_env = (rain * 22) >> 6
+        out_env = (rain * 17) >> 6
         
         # 等電力ブレンド
         val = ((out_pink * g_pink) >> 8) + ((out_env * eff_env_gain) >> 8)
@@ -376,62 +287,6 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
     state[3] = _b3; state[4] = _b4; state[5] = _b5; state[6] = _b6
     env_lpf1 = lp1
     env_lpf2 = lp2
-
-def generate_crossfade_env_grain(raw_bytes, out_buf, vol, g_env, g_grain):
-    """環境音から粒状合成へのシームレスな等電力クロスフェード生成。"""
-    global env_lpf1, env_lpf2, env_lfo_phase
-    global grain1_low, grain1_band, grain2_low, grain2_band
-    _update_grain_parameters()
-    _pack_into = struct.pack_into
-    
-    env_lfo_phase += 0.064
-    if env_lfo_phase > 628.3: env_lfo_phase = 0.0
-    lfo_mod = int(256 + 46 * math.sin(env_lfo_phase))
-    eff_env_gain = (g_env * lfo_mod) >> 8
-    
-    lp1 = env_lpf1
-    lp2 = env_lpf2
-    g1_low = grain1_low; g1_band = grain1_band
-    g2_low = grain2_low; g2_band = grain2_band
-    f1 = grain1_f; q1 = grain1_q; env1 = grain1_env
-    f2 = grain2_f; q2 = grain2_q; env2 = grain2_env
-    
-    for i in range(len(raw_bytes)):
-        w = raw_bytes[i] - 128
-        
-        # 環境音（雨音）
-        w_in = w << 6
-        lp1 += (10500 * (w_in - lp1)) >> 15
-        lp2 += (4200 * (lp1 - lp2)) >> 15
-        high = (w_in - lp1) >> 4
-        rain = (lp1 + lp2 + high) >> 1
-        out_env = (rain * 22) >> 6
-        
-        # 粒状合成
-        white_g = w << 7
-        g1_low += (f1 * g1_band) >> 14
-        high1 = white_g - g1_low - ((q1 * g1_band) >> 14)
-        g1_band += (f1 * high1) >> 14
-        
-        g2_low += (f2 * g2_band) >> 14
-        high2 = white_g - g2_low - ((q2 * g2_band) >> 14)
-        g2_band += (f2 * high2) >> 14
-        
-        grain_out = ((g1_band * env1) >> 8) + ((g2_band * env2) >> 8)
-        val = (grain_out >> 1) + (white_g >> 2)
-        out_grain = val >> 3
-        
-        # 等電力ブレンド
-        val = ((out_env * eff_env_gain) >> 8) + ((out_grain * g_grain) >> 8)
-        out = (val * vol) >> 9
-        if out > 32767: out = 32767
-        elif out < -32768: out = -32768
-        _pack_into('<h', out_buf, i * 2, out)
-        
-    env_lpf1 = lp1
-    env_lpf2 = lp2
-    grain1_low = g1_low; grain1_band = g1_band
-    grain2_low = g2_low; grain2_band = g2_band
 
 # ==========================================
 # Equal Power Crossfade Math
@@ -457,7 +312,7 @@ _urandom = os.urandom
 session_start_ms = 0
 standby_start_ms = 0
 
-print(f"[SYS] Initialization complete. Mode: {'TEST (45s)' if TEST_MODE else 'NORMAL (45m)'}")
+print(f"[SYS] Initialization complete. Mode: {'TEST (30s)' if TEST_MODE else 'NORMAL (30m)'}")
 
 while True:
     event = btn.update()
@@ -482,10 +337,10 @@ while True:
             print(f"[EVENT] Playback toggled -> STATE_PLAYING (Vol: {current_volume})")
             
     elif event == 'DOUBLE':
-        # Focus Sound Mix セッション起動 (Pink -> Ambient Rain -> Granular -> Fadeout -> Sleep)
+        # Focus Sound Mix セッション起動 (Pink -> Ambient Rain -> Fadeout -> Sleep)
         current_state = STATE_TIMER
         session_start_ms = time.ticks_ms()
-        print(f"[EVENT] Focus Sound Mix started -> STATE_TIMER ({'45s' if TEST_MODE else '45m'})")
+        print(f"[EVENT] Focus Sound Mix started -> STATE_TIMER ({'30s' if TEST_MODE else '30m'})")
             
     elif event == 'HOLDING':
         if current_state in (STATE_PLAYING, STATE_TIMER):
@@ -535,33 +390,15 @@ while True:
             audio_out.write(noise_buf)
             led.set_color(*COLOR_PHASE_ENV)
             
-        # Phase 2 -> Phase 3 クロスフェード (環境音 -> 粒状合成, 29 〜 30分)
+        # Phase 3: 最終フェードアウト (環境音 -> ゼロ, 29 〜 30分)
         elif elapsed < T2_END:
-            p = (elapsed - T2_START) / CROSSFADE_MS
-            g_env, g_grain = calculate_crossfade_gains(p)
-            generate_crossfade_env_grain(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, g_env, g_grain)
-            audio_out.write(noise_buf)
-            # LEDの色をグリーンからインディゴ/シアンへ滑らかに補間
-            r = int(COLOR_PHASE_ENV[0] * (1 - p) + COLOR_PHASE_GRAIN[0] * p)
-            g = int(COLOR_PHASE_ENV[1] * (1 - p) + COLOR_PHASE_GRAIN[1] * p)
-            b = int(COLOR_PHASE_ENV[2] * (1 - p) + COLOR_PHASE_GRAIN[2] * p)
-            led.set_color(r, g, b)
-            
-        # Phase 3: 粒状合成単独 (30 〜 44分)
-        elif elapsed < T3_START:
-            generate_granular_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume)
-            audio_out.write(noise_buf)
-            led.set_color(*COLOR_PHASE_GRAIN)
-            
-        # Phase 4: 最終フェードアウト (粒状合成 -> ゼロ, 44 〜 45分)
-        elif elapsed < T3_END:
-            p = (elapsed - T3_START) / FADEOUT_MS
+            p = (elapsed - T2_START) / FADEOUT_MS
             fade_gain = int(math.cos(p * (math.pi / 2.0)) * 256)
-            generate_granular_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, scale=fade_gain)
+            generate_env_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, scale=fade_gain)
             audio_out.write(noise_buf)
             # LED輝度も音量に合わせて減光
             bright = max(0.0, 1.0 - p)
-            led.set_color(COLOR_PHASE_GRAIN[0], COLOR_PHASE_GRAIN[1], COLOR_PHASE_GRAIN[2], brightness=bright)
+            led.set_color(COLOR_PHASE_ENV[0], COLOR_PHASE_ENV[1], COLOR_PHASE_ENV[2], brightness=bright)
             
         # セッション完了 -> スタンバイ & ディープスリープへ移行
         else:
