@@ -2,10 +2,21 @@ import os
 import struct
 import time
 import machine
-import esp32
 import math
 import random
 from machine import I2S, Pin
+
+# ==========================================
+# Deep Sleep Configuration
+# ==========================================
+# セッション終了後、約1日（24時間）スリープ。
+# 起床したら何もせず即再スリープする（実質的な停止状態）。
+SLEEP_DURATION_MS = 24 * 60 * 60 * 1000  # 86,400,000 ms
+
+# 起床判定は最優先で行う（LED点灯・I2S初期化より前）
+if machine.reset_cause() == machine.DEEPSLEEP_RESET:
+    # タイマー起床 → 何もせず即再スリープ
+    machine.deepsleep(SLEEP_DURATION_MS)
 
 # ==========================================
 # System Configuration & Pin Assignments
@@ -577,17 +588,19 @@ while True:
         led.set_color(*COLOR_STOP)
 
     elif current_state == STATE_STANDBY:
-        # 数秒の安定待機後、極低消費電力のディープスリープへ移行
+        # 数秒の安定待機後、タイマー起床のディープスリープへ移行
         if time.ticks_diff(now_ms, standby_start_ms) >= 3000:
-            print("[POWER] Entering Deep Sleep. Press button to wake.")
+            print(f"[POWER] Entering Deep Sleep for ~24h. Wake via timer only.")
             led.set_color(0, 0, 0)
             time.sleep_ms(50)
-            wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
+            # I2Sピン等を安全な状態に戻す（リーク低減）
             try:
-                esp32.wake_on_ext0(pin=wake_pin, level=esp32.WAKEUP_ALL_LOW)
-            except Exception as e:
-                print("[WARN] Wake configuration failed:", e)
+                Pin(BCLK_PIN, Pin.IN)
+                Pin(DATA_PIN, Pin.IN)
+                Pin(WS_PIN, Pin.IN)
+            except Exception:
+                pass
             time.sleep_ms(100)
-            machine.deepsleep()
+            machine.deepsleep(SLEEP_DURATION_MS)
         else:
             time.sleep_ms(50)
