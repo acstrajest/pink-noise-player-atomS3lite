@@ -9,7 +9,8 @@ from machine import I2S, Pin
 # Sleep Configuration
 # ==========================================
 # セッション終了後、24時間待機のライトスリープに入ります。
-# TailBatの電源オン/オフ（またはボタン操作）で次回使用時にリセット起動できます。
+# ・再度動かすとき: AtomS3 Lite 本体のボタンを押すと即座に初期状態（停止中）に復帰します。
+# ・そのまま終了するとき: TailBatの電源ボタンでOFFにすれば完全停止します。
 SLEEP_DURATION_MS = 24 * 60 * 60 * 1000  # 86,400,000 ms (24 hours)
 
 # ==========================================
@@ -295,6 +296,16 @@ def calculate_crossfade_gains(progress):
     return gain_a, gain_b
 
 # ==========================================
+# Wakeup Callback from Light Sleep
+# ==========================================
+btn_woke_flag = False
+
+def on_lightsleep_wake_btn(pin):
+    """ライトスリープ中に本体ボタンが押されたときの割り込みハンドラ。"""
+    global btn_woke_flag
+    btn_woke_flag = True
+
+# ==========================================
 # Application Runtime & Finite State Machine
 # ==========================================
 current_state = STATE_STOPPED
@@ -395,7 +406,7 @@ while True:
             bright = max(0.0, 1.0 - p)
             led.set_color(COLOR_PHASE_ENV[0], COLOR_PHASE_ENV[1], COLOR_PHASE_ENV[2], brightness=bright)
             
-        # セッション完了 -> スタンバイ & 24時間待機ライトスリープへ移行
+        # セッション完了 -> スタンバイ & ライトスリープへ移行
         else:
             print("[STATE] Focus Sound Mix completed -> Preparing Light Sleep")
             current_state = STATE_STANDBY
@@ -420,11 +431,12 @@ while True:
         led.set_color(*COLOR_STOP)
 
     elif current_state == STATE_STANDBY:
-        # 数秒の安定待機後、24時間待機のライトスリープへ移行
+        # 数秒の安定待機後、ボタン起床待機のライトスリープへ移行
         if time.ticks_diff(now_ms, standby_start_ms) >= 3000:
-            print(f"[POWER] Entering Light Sleep for 24h. TailBat power cycle to restart.")
+            print("[POWER] Entering Light Sleep. Press button to wake & reset, or power off TailBat.")
             led.set_color(0, 0, 0)
             time.sleep_ms(50)
+            
             # I2Sピン等を安全な状態に戻す（リーク低減）
             try:
                 Pin(BCLK_PIN, Pin.IN)
@@ -433,8 +445,24 @@ while True:
             except Exception:
                 pass
             time.sleep_ms(100)
-            # 24時間ライトスリープ（途中で目覚めても再度スリープを継続）
+            
+            # 本体のボタン（GPIO 41）による起床割り込みを設定
+            btn_woke_flag = False
+            wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
+            try:
+                wake_pin.irq(handler=on_lightsleep_wake_btn, trigger=Pin.IRQ_FALLING, wake=machine.SLEEP)
+            except TypeError:
+                wake_pin.irq(handler=on_lightsleep_wake_btn, trigger=Pin.IRQ_FALLING)
+
             while True:
                 machine.lightsleep(SLEEP_DURATION_MS)
+                
+                # ボタン押下により起床した場合
+                if btn_woke_flag or wake_pin.value() == 0:
+                    print("[POWER] Button pressed in sleep -> Resetting to initial state...")
+                    time.sleep_ms(200)
+                    machine.reset()  # クリーンに再起動して初期状態（緑LED・停止中）へ復帰
+                
+                # タイマー時間切れなどで起きた場合はスリープを継続
         else:
             time.sleep_ms(50)
