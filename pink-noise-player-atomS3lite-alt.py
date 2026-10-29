@@ -6,16 +6,11 @@ import math
 from machine import I2S, Pin
 
 # ==========================================
-# Deep Sleep Configuration
+# Sleep Configuration
 # ==========================================
-# セッション終了後、約1日（24時間）スリープ。
-# 起床したら何もせず即再スリープする（実質的な停止状態）。
-SLEEP_DURATION_MS = 24 * 60 * 60 * 1000  # 86,400,000 ms
-
-# 起床判定は最優先で行う（LED点灯・I2S初期化より前）
-if machine.reset_cause() == machine.DEEPSLEEP_RESET:
-    # タイマー起床 → 何もせず即再スリープ
-    machine.deepsleep(SLEEP_DURATION_MS)
+# セッション終了後、24時間待機のライトスリープに入ります。
+# TailBatの電源オン/オフ（またはボタン操作）で次回使用時にリセット起動できます。
+SLEEP_DURATION_MS = 24 * 60 * 60 * 1000  # 86,400,000 ms (24 hours)
 
 # ==========================================
 # System Configuration & Pin Assignments
@@ -32,7 +27,7 @@ VOLUME_STEP = 50
 
 # ------------------------------------------
 # Session Timeline Configuration
-# Focus Sound Mix: Pink Noise (15m) -> Ambient Rain (15m) -> Fadeout (60s) -> Deep Sleep
+# Focus Sound Mix: Pink Noise (15m) -> Ambient Rain (15m) -> Fadeout (60s) -> Light Sleep
 # Total Session Duration: 30 minutes
 # ------------------------------------------
 # TEST_MODE: False = 30分セッション (本番用: 15分×2パート + 60秒クロスフェード + 60秒フェードアウト)
@@ -62,7 +57,7 @@ T2_END   = TOTAL_SESSION_MS                  # 30m: Sleep transition
 STATE_STOPPED = 0   # 停止中
 STATE_PLAYING = 1   # 通常再生中（シングルクリック: ピンクノイズ常時再生）
 STATE_TIMER   = 2   # フォーカスミックスタイマー動作中（ダブルクリック: 30分セッション）
-STATE_STANDBY = 3   # ディープスリープ移行前の待機状態
+STATE_STANDBY = 3   # スリープ移行前の待機状態
 
 # ==========================================
 # Custom WS2812 LED Driver
@@ -337,7 +332,7 @@ while True:
             print(f"[EVENT] Playback toggled -> STATE_PLAYING (Vol: {current_volume})")
             
     elif event == 'DOUBLE':
-        # Focus Sound Mix セッション起動 (Pink -> Ambient Rain -> Fadeout -> Sleep)
+        # Focus Sound Mix セッション起動 (Pink -> Ambient Rain -> Fadeout -> Light Sleep)
         current_state = STATE_TIMER
         session_start_ms = time.ticks_ms()
         print(f"[EVENT] Focus Sound Mix started -> STATE_TIMER ({'30s' if TEST_MODE else '30m'})")
@@ -400,9 +395,9 @@ while True:
             bright = max(0.0, 1.0 - p)
             led.set_color(COLOR_PHASE_ENV[0], COLOR_PHASE_ENV[1], COLOR_PHASE_ENV[2], brightness=bright)
             
-        # セッション完了 -> スタンバイ & ディープスリープへ移行
+        # セッション完了 -> スタンバイ & 24時間待機ライトスリープへ移行
         else:
-            print("[STATE] Focus Sound Mix completed -> Preparing Deep Sleep")
+            print("[STATE] Focus Sound Mix completed -> Preparing Light Sleep")
             current_state = STATE_STANDBY
             standby_start_ms = now_ms
             # アンプのポップノイズ防止のため無音をフラッシュ
@@ -425,9 +420,9 @@ while True:
         led.set_color(*COLOR_STOP)
 
     elif current_state == STATE_STANDBY:
-        # 数秒の安定待機後、タイマー起床のディープスリープへ移行
+        # 数秒の安定待機後、24時間待機のライトスリープへ移行
         if time.ticks_diff(now_ms, standby_start_ms) >= 3000:
-            print(f"[POWER] Entering Deep Sleep for ~24h. Wake via timer only.")
+            print(f"[POWER] Entering Light Sleep for 24h. TailBat power cycle to restart.")
             led.set_color(0, 0, 0)
             time.sleep_ms(50)
             # I2Sピン等を安全な状態に戻す（リーク低減）
@@ -438,6 +433,8 @@ while True:
             except Exception:
                 pass
             time.sleep_ms(100)
-            machine.deepsleep(SLEEP_DURATION_MS)
+            # 24時間ライトスリープ（途中で目覚めても再度スリープを継続）
+            while True:
+                machine.lightsleep(SLEEP_DURATION_MS)
         else:
             time.sleep_ms(50)
