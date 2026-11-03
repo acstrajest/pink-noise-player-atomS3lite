@@ -8,9 +8,9 @@ from machine import I2S, Pin
 # ==========================================
 # Sleep Configuration
 # ==========================================
-# セッション終了後、24時間待機のライトスリープに入ります。
-# ・再度動かすとき: AtomS3 Lite 本体のボタンを押すと即座に初期状態（停止中）に復帰します。
-# ・そのまま終了するとき: TailBatの電源ボタンでOFFにすれば完全停止します。
+# Enters a 24-hour standby light sleep after session completion.
+# - To restart: Press the built-in button on AtomS3 Lite to immediately reset to the initial state (Stopped).
+# - To power off: Turn off the power switch on TailBat for a complete shutdown.
 SLEEP_DURATION_MS = 24 * 60 * 60 * 1000  # 86,400,000 ms (24 hours)
 
 # ==========================================
@@ -31,8 +31,8 @@ VOLUME_STEP = 50
 # Focus Sound Mix: Pink Noise (15m) -> Ambient Rain (15m) -> Fadeout (60s) -> Light Sleep
 # Total Session Duration: 30 minutes
 # ------------------------------------------
-# TEST_MODE: False = 30分セッション (本番用: 15分×2パート + 60秒クロスフェード + 60秒フェードアウト)
-#            True  = 30秒セッション (動作確認用: 15秒×2パート + 3秒クロスフェード + 3秒フェードアウト)
+# TEST_MODE: False = 30-minute session (Production: 15m x 2 parts + 60s crossfade + 60s fadeout)
+#            True  = 30-second session (Verification: 15s x 2 parts + 3s crossfade + 3s fadeout)
 TEST_MODE = False
 
 if TEST_MODE:
@@ -55,10 +55,10 @@ T2_END   = TOTAL_SESSION_MS                  # 30m: Sleep transition
 # ------------------------------------------
 # Application State Definitions
 # ------------------------------------------
-STATE_STOPPED = 0   # 停止中
-STATE_PLAYING = 1   # 通常再生中（シングルクリック: ピンクノイズ常時再生）
-STATE_TIMER   = 2   # フォーカスミックスタイマー動作中（ダブルクリック: 30分セッション）
-STATE_STANDBY = 3   # スリープ移行前の待機状態
+STATE_STOPPED = 0   # Playback stopped
+STATE_PLAYING = 1   # Continuous playback (Single click: Pink noise)
+STATE_TIMER   = 2   # Focus Sound Mix timer running (Double click: 30m session)
+STATE_STANDBY = 3   # Low-power standby awaiting sleep
 
 # ==========================================
 # Custom WS2812 LED Driver
@@ -145,12 +145,12 @@ btn = ButtonHandler(BTN_PIN)
 led = SimpleLED(LED_PIN)
 
 # Color Palette Definitions (R, G, B)
-COLOR_STOP        = (0, 5, 0)     # エメラルドグリーン (停止中)
-COLOR_PLAY        = (0, 0, 5)     # サファイアブルー   (通常ピンクノイズ再生)
-COLOR_VOL         = (10, 10, 0)   # アンバーイエロー   (音量調整中)
-COLOR_PHASE_PINK  = (12, 2, 5)    # ローズピンク       (タイマー Phase 1: ピンクノイズ)
-COLOR_PHASE_ENV   = (1, 10, 3)    # フォレストグリーン (タイマー Phase 2: 環境音・雨)
-COLOR_STANDBY     = (1, 1, 1)     # 薄白色             (スリープ直前待機)
+COLOR_STOP        = (0, 5, 0)     # Emerald Green (Stopped)
+COLOR_PLAY        = (0, 0, 5)     # Sapphire Blue (Continuous Pink Noise)
+COLOR_VOL         = (10, 10, 0)   # Amber Yellow  (Volume Adjust)
+COLOR_PHASE_PINK  = (12, 2, 5)    # Rose Pink     (Timer Phase 1: Pink Noise)
+COLOR_PHASE_ENV   = (1, 10, 3)    # Forest Green  (Timer Phase 2: Ambient Rain)
+COLOR_STANDBY     = (1, 1, 1)     # Muted White   (Pre-sleep Standby)
 
 led.set_color(*COLOR_STOP)
 
@@ -163,11 +163,11 @@ silent_buf = bytearray(CHUNK_BYTES)
 # DSP Core: Filter-based Real-time Generators
 # ==========================================
 
-# --- 1. ピンクノイズ生成器 (Paul Kellet 7-pole IIR) ---
+# --- 1. Pink Noise Generator (Paul Kellet 7-pole IIR) ---
 pink_filter_state = [0, 0, 0, 0, 0, 0, 0]
 
 def generate_pink_noise(raw_bytes, out_buf, vol, state, scale=256):
-    """16ビット・ピンクノイズを直接出力バッファに生成。"""
+    """Generate 16-bit pink noise directly into the output buffer."""
     _b0, _b1, _b2, _b3, _b4, _b5, _b6 = state
     _pack_into = struct.pack_into
     for i in range(len(raw_bytes)):
@@ -191,22 +191,22 @@ def generate_pink_noise(raw_bytes, out_buf, vol, state, scale=256):
     state[0] = _b0; state[1] = _b1; state[2] = _b2
     state[3] = _b3; state[4] = _b4; state[5] = _b5; state[6] = _b6
 
-# --- 2. 環境音（雨音）生成器 (多段カスケードLPF + 高域テクスチャ + LFOうねり) ---
-# 音量はピンクノイズと同等〜約80%の落ち着いたレベルに調整 (mult = 17)
+# --- 2. Ambient Rain Noise Generator (Cascaded LPF + High Texture + LFO Swell) ---
+# Volume balanced to match pink noise at ~80-100% perceived level (mult = 17)
 env_lpf1 = 0
 env_lpf2 = 0
 env_lfo_phase = 0.0
 
 def generate_env_noise(raw_bytes, out_buf, vol, scale=256):
-    """フィルターとLFOスウェルを駆使した自然な雨の環境音を直接出力バッファに生成。"""
+    """Generate natural ambient rain noise directly into the output buffer using filters and LFO swell."""
     global env_lpf1, env_lpf2, env_lfo_phase
     _pack_into = struct.pack_into
     
-    # チャンク周期(~128ms)ごとにLFOを進めて緩やかな雨脚・風のうねりを表現 (~0.08Hz)
+    # Advance LFO phase per chunk (~128ms) to simulate gentle wind and rain swells (~0.08Hz)
     env_lfo_phase += 0.064
     if env_lfo_phase > 628.3:
         env_lfo_phase = 0.0
-    lfo_mod = int(256 + 46 * math.sin(env_lfo_phase))  # 0.82 〜 1.18倍のうねり
+    lfo_mod = int(256 + 46 * math.sin(env_lfo_phase))  # Modulate between ~0.82x and 1.18x
     
     eff_scale = (scale * lfo_mod) >> 8
     lp1 = env_lpf1
@@ -215,15 +215,15 @@ def generate_env_noise(raw_bytes, out_buf, vol, scale=256):
     for i in range(len(raw_bytes)):
         white_in = (raw_bytes[i] - 128) << 6
         
-        # 1段目LPF (~900Hz: 雨音の主体)
+        # 1st-stage LPF (~900Hz: Main rain shower body)
         lp1 += (10500 * (white_in - lp1)) >> 15
-        # 2段目LPF (~350Hz: 遠くの地鳴り・低域の包まれ感)
+        # 2nd-stage LPF (~350Hz: Distant rumble and low-end immersion)
         lp2 += (4200 * (lp1 - lp2)) >> 15
-        # 高域シェルフ成分 (かすかな雨粒の滴り)
+        # High shelf component (Delicate rain droplet texture)
         high = (white_in - lp1) >> 4
         
         rain = (lp1 + lp2 + high) >> 1
-        # 音量をピンクノイズと同等〜80%程度に調整
+        # Balanced volume gain (matching pink noise level)
         out_env = (rain * 17) >> 6
         if eff_scale != 256:
             out_env = (out_env * eff_scale) >> 8
@@ -236,9 +236,9 @@ def generate_env_noise(raw_bytes, out_buf, vol, scale=256):
     env_lpf1 = lp1
     env_lpf2 = lp2
 
-# --- 3. 高速シングルパス・等電力クロスフェード合成器 ---
+# --- 3. Single-pass Equal-Power Crossfade Synthesizer ---
 def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
-    """ピンクノイズから環境音へのシームレスな等電力クロスフェード生成。"""
+    """Generate seamless equal-power crossfade from Pink Noise to Ambient Rain."""
     global env_lpf1, env_lpf2, env_lfo_phase
     _b0, _b1, _b2, _b3, _b4, _b5, _b6 = state
     _pack_into = struct.pack_into
@@ -254,7 +254,7 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
     for i in range(len(raw_bytes)):
         w = raw_bytes[i] - 128
         
-        # ピンクノイズ
+        # Pink noise
         _b0 = (32731 * _b0 + 1819 * w) >> 15
         _b1 = (32549 * _b1 + 2460 * w) >> 15
         _b2 = (31752 * _b2 + 5041 * w) >> 15
@@ -264,7 +264,7 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
         out_pink = _b0 + _b1 + _b2 + _b3 + _b4 + _b5 + _b6 + ((w * 17570) >> 15)
         _b6 = (w * 3798) >> 15
         
-        # 環境音（雨音）
+        # Ambient rain
         w_in = w << 6
         lp1 += (10500 * (w_in - lp1)) >> 15
         lp2 += (4200 * (lp1 - lp2)) >> 15
@@ -272,7 +272,7 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
         rain = (lp1 + lp2 + high) >> 1
         out_env = (rain * 17) >> 6
         
-        # 等電力ブレンド
+        # Equal-power blend
         val = ((out_pink * g_pink) >> 8) + ((out_env * eff_env_gain) >> 8)
         out = (val * vol) >> 9
         if out > 32767: out = 32767
@@ -288,7 +288,7 @@ def generate_crossfade_pink_env(raw_bytes, out_buf, vol, g_pink, g_env, state):
 # Equal Power Crossfade Math
 # ==========================================
 def calculate_crossfade_gains(progress):
-    """等電力クロスフェード曲線: gA^2 + gB^2 = 1 (progress: 0.0 〜 1.0)。"""
+    """Equal-power crossfade curve: gA^2 + gB^2 = 1 (progress: 0.0 to 1.0)."""
     p = max(0.0, min(1.0, progress))
     angle = p * (math.pi / 2.0)
     gain_a = int(math.cos(angle) * 256)
@@ -301,7 +301,7 @@ def calculate_crossfade_gains(progress):
 btn_woke_flag = False
 
 def on_lightsleep_wake_btn(pin):
-    """ライトスリープ中に本体ボタンが押されたときの割り込みハンドラ。"""
+    """Interrupt handler triggered when the button is pressed during light sleep."""
     global btn_woke_flag
     btn_woke_flag = True
 
@@ -343,7 +343,7 @@ while True:
             print(f"[EVENT] Playback toggled -> STATE_PLAYING (Vol: {current_volume})")
             
     elif event == 'DOUBLE':
-        # Focus Sound Mix セッション起動 (Pink -> Ambient Rain -> Fadeout -> Light Sleep)
+        # Start Focus Sound Mix session (Pink -> Ambient Rain -> Fadeout -> Light Sleep)
         current_state = STATE_TIMER
         session_start_ms = time.ticks_ms()
         print(f"[EVENT] Focus Sound Mix started -> STATE_TIMER ({'30s' if TEST_MODE else '30m'})")
@@ -372,53 +372,53 @@ while True:
     if current_state == STATE_TIMER:
         elapsed = time.ticks_diff(now_ms, session_start_ms)
         
-        # Phase 1: ピンクノイズ単独 (0 〜 14分)
+        # Phase 1: Pure Pink Noise (0 to 14 min)
         if elapsed < T1_START:
             generate_pink_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, pink_filter_state)
             audio_out.write(noise_buf)
             led.set_color(*COLOR_PHASE_PINK)
             
-        # Phase 1 -> Phase 2 クロスフェード (ピンクノイズ -> 環境音, 14 〜 15分)
+        # Phase 1 -> Phase 2 Crossfade (Pink Noise to Ambient Rain, 14 to 15 min)
         elif elapsed < T1_END:
             p = (elapsed - T1_START) / CROSSFADE_MS
             g_pink, g_env = calculate_crossfade_gains(p)
             generate_crossfade_pink_env(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, g_pink, g_env, pink_filter_state)
             audio_out.write(noise_buf)
-            # LEDの色をピンクからグリーンへ滑らかに補間
+            # Smoothly interpolate LED color from Pink to Green
             r = int(COLOR_PHASE_PINK[0] * (1 - p) + COLOR_PHASE_ENV[0] * p)
             g = int(COLOR_PHASE_PINK[1] * (1 - p) + COLOR_PHASE_ENV[1] * p)
             b = int(COLOR_PHASE_PINK[2] * (1 - p) + COLOR_PHASE_ENV[2] * p)
             led.set_color(r, g, b)
             
-        # Phase 2: 環境音（雨）単独 (15 〜 29分)
+        # Phase 2: Pure Ambient Rain (15 to 29 min)
         elif elapsed < T2_START:
             generate_env_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume)
             audio_out.write(noise_buf)
             led.set_color(*COLOR_PHASE_ENV)
             
-        # Phase 3: 最終フェードアウト (環境音 -> ゼロ, 29 〜 30分)
+        # Phase 3: Final Fadeout (Ambient Rain to Zero, 29 to 30 min)
         elif elapsed < T2_END:
             p = (elapsed - T2_START) / FADEOUT_MS
             fade_gain = int(math.cos(p * (math.pi / 2.0)) * 256)
             generate_env_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, scale=fade_gain)
             audio_out.write(noise_buf)
-            # LED輝度も音量に合わせて減光
+            # Dim LED brightness along with volume decay
             bright = max(0.0, 1.0 - p)
             led.set_color(COLOR_PHASE_ENV[0], COLOR_PHASE_ENV[1], COLOR_PHASE_ENV[2], brightness=bright)
             
-        # セッション完了 -> スタンバイ & ライトスリープへ移行
+        # Session Completed -> Transition to Standby and Light Sleep
         else:
             print("[STATE] Focus Sound Mix completed -> Preparing Light Sleep")
             current_state = STATE_STANDBY
             standby_start_ms = now_ms
-            # アンプのポップノイズ防止のため無音をフラッシュ
+            # Flush silence to prevent amplifier pop noise
             for _ in range(10):
                 audio_out.write(silent_buf)
             audio_out.deinit()
             led.set_color(*COLOR_STANDBY)
 
     elif current_state == STATE_PLAYING:
-        # シングルクリックによる常時ピンクノイズ再生
+        # Standard continuous pink noise playback
         generate_pink_noise(_urandom(CHUNK_SAMPLES), noise_buf, current_volume, pink_filter_state)
         audio_out.write(noise_buf)
         if event in ('HOLDING', 'LONG'):
@@ -431,13 +431,13 @@ while True:
         led.set_color(*COLOR_STOP)
 
     elif current_state == STATE_STANDBY:
-        # 数秒の安定待機後、ボタン起床待機のライトスリープへ移行
+        # After a brief stabilization delay, enter light sleep awaiting button press
         if time.ticks_diff(now_ms, standby_start_ms) >= 3000:
             print("[POWER] Entering Light Sleep. Press button to wake & reset, or power off TailBat.")
             led.set_color(0, 0, 0)
             time.sleep_ms(50)
             
-            # I2Sピン等を安全な状態に戻す（リーク低減）
+            # Reset I2S pins to input state for current leakage reduction
             try:
                 Pin(BCLK_PIN, Pin.IN)
                 Pin(DATA_PIN, Pin.IN)
@@ -446,7 +446,7 @@ while True:
                 pass
             time.sleep_ms(100)
             
-            # 本体のボタン（GPIO 41）による起床割り込みを設定
+            # Configure wakeup interrupt for the built-in button (GPIO 41)
             btn_woke_flag = False
             wake_pin = Pin(BTN_PIN, Pin.IN, Pin.PULL_UP)
             try:
@@ -457,12 +457,12 @@ while True:
             while True:
                 machine.lightsleep(SLEEP_DURATION_MS)
                 
-                # ボタン押下により起床した場合
+                # Check if woken by button press
                 if btn_woke_flag or wake_pin.value() == 0:
                     print("[POWER] Button pressed in sleep -> Resetting to initial state...")
                     time.sleep_ms(200)
-                    machine.reset()  # クリーンに再起動して初期状態（緑LED・停止中）へ復帰
+                    machine.reset()  # Clean hardware reset back to initial stopped state (Green LED)
                 
-                # タイマー時間切れなどで起きた場合はスリープを継続
+                # If woken by timer expiration, continue sleeping
         else:
             time.sleep_ms(50)
